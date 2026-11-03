@@ -1,8 +1,14 @@
-# Mencegah pengunjung melihat daftar file.
+# =====================================================
+# SECURITY DIRECTORY CONFIGURATION - CONNE UPLOADS
+# =====================================================
+# Melindungi direktori penyimpanan berkas unggahan publik dari
+# eksekusi kode berbahaya atau kebocoran struktur berkas server.
+
+# 1. Mencegah pengunjung melihat daftar berkas direktori (Directory Browsing).
 Options -Indexes
 
-# Menolak akses langsung ke file yang berpotensi
-# menjalankan kode server.
+# 2. Menolak eksekusi dan akses langsung ke seluruh jenis skrip yang berpotensi
+#    dieksekusi oleh mesin server (PHP, CGI, Perl, Python, Shell, dll).
 <FilesMatch "\.(php|php3|php4|php5|php7|php8|phtml|phar|cgi|pl|py|sh)$">
     Require all denied
 </FilesMatch>

@@ -2,29 +2,44 @@
 
 /**
  * =====================================================
- * EDIT COMMENT - CONNE
- * Menampilkan form untuk mengedit komentar.
+ * EDIT COMMENT PAGE - CONNE
  * =====================================================
+ * Menampilkan antarmuka untuk mengubah isi komentar,
+ * mengganti lampiran foto, atau mengganti dokumen berkas.
+ * Hanya pemilik komentar yang diizinkan mengakses halaman ini.
  */
 
+// Memanggil modul autentikasi dan fungsi bantuan.
 require_once __DIR__ . '/../helpers/auth.php';
 
+// Memastikan hanya pengguna yang telah login yang dapat mengakses form edit.
 require_login();
 
+// Mengambil ID akun pengguna yang sedang aktif dari session.
 $currentUser = current_user_id();
 
-// Mengambil ID komentar.
+// -----------------------------------------------------
+// 1. VALIDASI PARAMETER ID KOMENTAR
+// -----------------------------------------------------
+
+// Mengambil dan memvalidasi integer ID komentar dari URL parameter (?id=...).
 $commentId = filter_var(
     $_GET['id'] ?? null,
     FILTER_VALIDATE_INT
 );
 
+// Jika ID tidak valid, alihkan kembali ke beranda dengan notifikasi error.
 if (!$commentId || $commentId < 1) {
     set_flash('error', 'Komentar tidak valid.');
     redirect('/pages/home.php');
 }
 
-// Mengambil komentar milik pengguna yang sedang login.
+// -----------------------------------------------------
+// 2. MENGAMBIL DATA KOMENTAR MILIK PENGGUNA
+// -----------------------------------------------------
+
+// Query prepared statement untuk mengambil data komentar serta memastikan
+// komentar tersebut adalah milik pengguna yang sedang aktif (hak akses/otorisasi).
 $query = $pdo->prepare("
     SELECT
         c.*,
@@ -37,18 +52,19 @@ $query = $pdo->prepare("
 ");
 
 $query->execute([
-    ':id' => $commentId,
+    ':id'      => $commentId,
     ':user_id' => $currentUser
 ]);
 
 $comment = $query->fetch();
 
-// Memastikan komentar ditemukan dan dimiliki pengguna.
+// Jika komentar tidak ditemukan atau bukan milik akun aktif, tolak akses.
 if (!$comment) {
     set_flash('error', 'Komentar tidak ditemukan atau bukan milik kamu.');
     redirect('/pages/home.php');
 }
 
+// Mengambil pesan kilat (flash message) dari sesi jika tersedia.
 $flash = get_flash();
 
 ?>
@@ -58,19 +74,15 @@ $flash = get_flash();
 
 <head>
     <meta charset="UTF-8">
-
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
     <title>Edit Komentar - CONNE</title>
-
-    <link rel="stylesheet"
-          href="<?= BASE_URL ?>/assets/css/style.css">
+    <!-- Memuat lembar gaya CSS utama -->
+    <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/style.css">
 </head>
 
 <body>
 
-    <!-- NAVBAR -->
-
+    <!-- Navigasi Atas Aplikasi -->
     <nav class="navbar">
 
         <a href="<?= BASE_URL ?>/pages/home.php" class="logo">
@@ -87,6 +99,7 @@ $flash = get_flash();
                 Profil
             </a>
 
+            <!-- Form Tombol Logout -->
             <form action="<?= BASE_URL ?>/actions/logout.php"
                   method="POST">
 
@@ -109,6 +122,7 @@ $flash = get_flash();
 
         <h2 class="page-title">Edit Komentar</h2>
 
+        <!-- Tautan Navigasi untuk Kembali ke Halaman Detail Postingan -->
         <p>
             <a href="<?= BASE_URL ?>/pages/detail-post.php?id=<?= (int) $comment['post_id']; ?>"
                class="btn btn-secondary btn-small">
@@ -117,8 +131,7 @@ $flash = get_flash();
         </p>
 
 
-        <!-- FLASH MESSAGE -->
-
+        <!-- Blok Notifikasi Pesan Flash (Sukses atau Error) -->
         <?php if ($flash): ?>
 
             <div class="alert <?= $flash['type'] === 'success'
@@ -132,8 +145,7 @@ $flash = get_flash();
         <?php endif; ?>
 
 
-        <!-- FORM EDIT KOMENTAR -->
-
+        <!-- Kartu Formulir Pengeditan Komentar -->
         <section class="card">
 
             <form
@@ -142,17 +154,18 @@ $flash = get_flash();
                 enctype="multipart/form-data"
             >
 
+                <!-- Token CSRF untuk memvalidasi keamanan request formulir -->
                 <input type="hidden"
                        name="csrf_token"
                        value="<?= e(csrf_token()); ?>">
 
+                <!-- ID komentar yang akan diperbarui -->
                 <input type="hidden"
                        name="comment_id"
                        value="<?= (int) $comment['id']; ?>">
 
 
-                <!-- ISI KOMENTAR -->
-
+                <!-- Input Isi Teks Komentar -->
                 <div class="form-group">
 
                     <label for="content">
@@ -175,8 +188,7 @@ $flash = get_flash();
                 </div>
 
 
-                <!-- GAMBAR LAMA -->
-
+                <!-- Bagian Gambar Lama & Opsi Menghapusnya -->
                 <?php if (!empty($comment['image'])): ?>
 
                     <div class="form-group">
@@ -191,7 +203,8 @@ $flash = get_flash();
                             >
                         </div>
 
-                        <label>
+                        <!-- Checkbox untuk menandai penghapusan gambar lama -->
+                        <label style="margin-top:8px; display:inline-flex; align-items:center; gap:6px; cursor:pointer;">
                             <input
                                 type="checkbox"
                                 name="remove_image"
@@ -205,8 +218,7 @@ $flash = get_flash();
                 <?php endif; ?>
 
 
-                <!-- UPLOAD GAMBAR BARU -->
-
+                <!-- Input Unggah Gambar Baru / Pengganti -->
                 <div class="form-group">
 
                     <label for="image">
@@ -219,14 +231,14 @@ $flash = get_flash();
                         type="file"
                         name="image"
                         id="image"
+                        class="form-control"
                         accept=".jpg,.jpeg,.png,.gif,.webp"
                     >
 
                 </div>
 
 
-                <!-- FILE LAMA -->
-
+                <!-- Bagian Berkas Dokumen Lama & Opsi Menghapusnya -->
                 <?php if (!empty($comment['file'])): ?>
 
                     <div class="form-group">
@@ -238,12 +250,14 @@ $flash = get_flash();
                                 href="<?= BASE_URL . '/' . e($comment['file']); ?>"
                                 target="_blank"
                                 rel="noopener noreferrer"
+                                class="file-link"
                             >
                                 📎 <?= e($comment['file_name'] ?? 'Lihat file'); ?>
                             </a>
                         </p>
 
-                        <label>
+                        <!-- Checkbox untuk menandai penghapusan file lama -->
+                        <label style="margin-top:8px; display:inline-flex; align-items:center; gap:6px; cursor:pointer;">
                             <input
                                 type="checkbox"
                                 name="remove_file"
@@ -257,8 +271,7 @@ $flash = get_flash();
                 <?php endif; ?>
 
 
-                <!-- UPLOAD FILE BARU -->
-
+                <!-- Input Unggah Berkas Dokumen Baru / Pengganti -->
                 <div class="form-group">
 
                     <label for="file">
@@ -271,15 +284,15 @@ $flash = get_flash();
                         type="file"
                         name="file"
                         id="file"
+                        class="form-control"
                         accept=".pdf,.txt,.csv,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip"
                     >
 
                 </div>
 
 
-                <!-- TOMBOL -->
-
-                <button type="submit" class="btn btn-primary">
+                <!-- Tombol Submit untuk Menyimpan Pembaruan Komentar -->
+                <button type="submit" class="btn btn-primary" style="margin-top:10px;">
                     Simpan Perubahan
                 </button>
 

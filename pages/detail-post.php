@@ -2,33 +2,48 @@
 
 /**
  * =====================================================
- * DETAIL POST - CONNE
- * Menampilkan satu postingan beserta komentarnya.
+ * DETAIL POST PAGE - CONNE
  * =====================================================
+ * Menampilkan satu postingan secara utuh beserta seluruh
+ * komentar yang terhubung. Menyediakan fitur:
+ * 1. Filter komentar berdasarkan tagar (#hashtag).
+ * 2. Form penambahan komentar baru (teks + foto/file).
+ * 3. Aksi edit dan hapus komentar bagi pemiliknya.
  */
 
+// Memanggil modul autentikasi dan fungsi bantuan.
 require_once __DIR__ . '/../helpers/auth.php';
 
+// Memastikan hanya pengguna yang telah login yang dapat melihat halaman ini.
 require_login();
+
+// Mengambil ID akun pengguna yang sedang login.
 $currentUser = current_user_id();
 
 // -----------------------------------------------------
-// 1. MENGAMBIL ID POSTINGAN
+// 1. MENGAMBIL DAN MEMVALIDASI ID POSTINGAN
 // -----------------------------------------------------
 
+// Memvalidasi ID postingan dari parameter GET (?id=...).
 $postId = filter_var(
     $_GET['id'] ?? null,
     FILTER_VALIDATE_INT
 );
 
+// Jika ID tidak valid atau kosong, redirect ke beranda dengan pesan error.
 if (!$postId || $postId < 1) {
     set_flash('error', 'Postingan tidak valid.');
     redirect('/pages/home.php');
 }
-// Mengambil filter hashtag dari URL.
+
+// -----------------------------------------------------
+// 2. FILTER TAGAR / HASHTAG PADA KOMENTAR
+// -----------------------------------------------------
+
+// Mengambil kata kunci hashtag dari parameter URL (?hashtag=...).
 $hashtag = trim($_GET['hashtag'] ?? '');
 
-// Memvalidasi format hashtag.
+// Memvalidasi format hashtag menggunakan regex Unicode (wajib diawali tanda #).
 if (
     $hashtag !== '' &&
     !preg_match('/^#[\p{L}\p{N}_]+$/u', $hashtag)
@@ -38,21 +53,26 @@ if (
 }
 
 // -----------------------------------------------------
-// 2. FUNGSI AVATAR DAN TANGGAL
+// 3. FUNGSI BANTUAN TAMPILAN (AVATAR & TANGGAL)
 // -----------------------------------------------------
 
+/**
+ * Menampilkan foto profil atau inisial huruf pertama username jika foto belum ada.
+ *
+ * @param string|null $photo Lokasi berkas foto profil.
+ * @param string $username Nama pengguna untuk membuat inisial.
+ * @param bool $small Apakah ukuran avatar diperkecil (misal untuk komentar).
+ * @return void
+ */
 function show_detail_avatar($photo, $username, $small = false)
 {
     $class = $small ? 'avatar avatar-small' : 'avatar';
 
     if (!empty($photo)) {
-
         echo '<img class="' . $class . '" src="' .
             BASE_URL . '/' . e($photo) .
             '" alt="Foto profil">';
-
     } else {
-
         $initial = strtoupper(
             function_exists('mb_substr')
                 ? mb_substr($username, 0, 1, 'UTF-8')
@@ -65,17 +85,24 @@ function show_detail_avatar($photo, $username, $small = false)
     }
 }
 
+/**
+ * Mengubah format timestamp database menjadi format tanggal yang mudah dibaca.
+ *
+ * @param string $date String tanggal dari database.
+ * @return string Tanggal terformat (contoh: 02 Nov 2026, 20:30).
+ */
 function detail_display_date($date)
 {
     return date('d M Y, H:i', strtotime($date));
 }
 
 // -----------------------------------------------------
-// 3. MENGAMBIL DATA POSTINGAN
+// 4. MENGAMBIL DATA POSTINGAN DARI DATABASE
 // -----------------------------------------------------
 
 try {
 
+    // Query untuk mengambil detail postingan beserta username dan foto pengunggah.
     $postQuery = $pdo->prepare("
         SELECT
             p.*,
@@ -93,7 +120,7 @@ try {
 
     $post = $postQuery->fetch();
 
-    // Jika postingan tidak ditemukan.
+    // Jika postingan tidak ditemukan di database.
     if (!$post) {
         set_flash('error', 'Postingan tidak ditemukan.');
         redirect('/pages/home.php');
@@ -101,61 +128,47 @@ try {
 
 
     // -------------------------------------------------
-    // 4. MENGAMBIL KOMENTAR
+    // 5. MENGAMBIL DAFTAR KOMENTAR POSTINGAN
     // -------------------------------------------------
 
-    // Query dasar untuk mengambil komentar.
-$sql = "
-    SELECT
-        c.*,
-        u.username,
-        u.profile_photo
-    FROM comments c
-    INNER JOIN users u ON c.user_id = u.id
-    WHERE c.post_id = :post_id
-";
-
-// Parameter query.
-$params = [
-    ':post_id' => $postId
-];
-
-// Jika hashtag diisi, tambahkan filter.
-if ($hashtag !== '') {
-
-    $sql .= "
-        AND c.content LIKE :hashtag
+    // Query dasar untuk mengambil komentar berelasi dengan post_id.
+    $sql = "
+        SELECT
+            c.*,
+            u.username,
+            u.profile_photo
+        FROM comments c
+        INNER JOIN users u ON c.user_id = u.id
+        WHERE c.post_id = :post_id
     ";
 
-    $params[':hashtag'] = '%' . $hashtag . '%';
-}
+    $params = [
+        ':post_id' => $postId
+    ];
 
-// Urutan komentar tetap seperti sebelumnya.
-// Urutan terbaru akan kita benahi pada nomor 11.
-$sql .= "
-    ORDER BY c.created_at DESC, c.id DESC
-";
+    // Jika filter hashtag diisi, saring hanya komentar yang memuat teks hashtag.
+    if ($hashtag !== '') {
+        $sql .= " AND c.content LIKE :hashtag ";
+        $params[':hashtag'] = '%' . $hashtag . '%';
+    }
 
-$commentQuery = $pdo->prepare($sql);
+    // Mengurutkan komentar dari yang terbaru.
+    $sql .= " ORDER BY c.created_at DESC, c.id DESC ";
 
-$commentQuery->execute($params);
-
-$comments = $commentQuery->fetchAll();
+    $commentQuery = $pdo->prepare($sql);
+    $commentQuery->execute($params);
+    $comments = $commentQuery->fetchAll();
 
 } catch (PDOException $e) {
 
+    // Mencatat detail error ke log server dan mengalihkan ke halaman beranda.
     error_log('Detail post error: ' . $e->getMessage());
-
     set_flash('error', 'Gagal mengambil detail postingan.');
-
     redirect('/pages/home.php');
+
 }
 
-
-// -----------------------------------------------------
-// 5. PESAN FLASH
-// -----------------------------------------------------
-
+// Mengambil pesan notifikasi flash jika tersedia.
 $flash = get_flash();
 
 ?>
@@ -166,12 +179,12 @@ $flash = get_flash();
 <head>
 
     <meta charset="UTF-8">
-
     <meta name="viewport"
           content="width=device-width, initial-scale=1.0">
 
     <title>Detail Postingan - CONNE</title>
 
+    <!-- Memuat berkas CSS utama -->
     <link rel="stylesheet"
           href="<?= BASE_URL ?>/assets/css/style.css">
 
@@ -179,8 +192,7 @@ $flash = get_flash();
 
 <body>
 
-<!-- NAVBAR -->
-
+<!-- Komponen Navigasi Atas -->
 <?php require_once __DIR__ . '/../includes/navbar.php'; ?>
 
 
@@ -188,8 +200,7 @@ $flash = get_flash();
 
     <h2 class="page-title">Detail Postingan</h2>
 
-    <!-- TOMBOL KEMBALI -->
-
+    <!-- Tombol Kembali ke Halaman Utama -->
     <p>
         <a href="<?= BASE_URL ?>/pages/home.php"
            class="btn btn-secondary btn-small">
@@ -198,8 +209,7 @@ $flash = get_flash();
     </p>
 
 
-    <!-- FLASH MESSAGE -->
-
+    <!-- Notifikasi Flash Message (Sukses atau Error) -->
     <?php if ($flash): ?>
 
         <div class="alert <?= $flash['type'] === 'success'
@@ -213,10 +223,10 @@ $flash = get_flash();
     <?php endif; ?>
 
 
-    <!-- POSTINGAN YANG DIPILIH -->
-
+    <!-- ================= KARTU POSTINGAN UTAMA ================= -->
     <article class="post-card">
 
+        <!-- Header Postingan: Avatar, Username, dan Tanggal -->
         <div class="post-header">
 
             <?php
@@ -241,8 +251,7 @@ $flash = get_flash();
         </div>
 
 
-        <!-- ISI POST -->
-
+        <!-- Isi Teks Postingan -->
         <?php if ($post['content'] !== ''): ?>
 
             <div class="post-content">
@@ -252,8 +261,7 @@ $flash = get_flash();
         <?php endif; ?>
 
 
-        <!-- GAMBAR POST -->
-
+        <!-- Gambar Postingan Jika Ada -->
         <?php if (!empty($post['image'])): ?>
 
             <img
@@ -265,8 +273,7 @@ $flash = get_flash();
         <?php endif; ?>
 
 
-        <!-- FILE POST -->
-
+        <!-- Dokumen Lampiran Postingan Jika Ada -->
         <?php if (!empty($post['file'])): ?>
 
             <a
@@ -283,75 +290,77 @@ $flash = get_flash();
     </article>
 
 
-    <!-- DAFTAR KOMENTAR -->
-
+    <!-- ================= DAFTAR SELURUH KOMENTAR ================= -->
     <section class="card comment-section">
 
         <div class="comment-title">
             Komentar (<?= count($comments); ?>)
         </div>
 
-        <!-- FILTER HASHTAG KOMENTAR -->
+        <!-- Formulir Filter Tagar / Hashtag Pada Komentar -->
+        <form method="GET"
+              action="<?= BASE_URL ?>/pages/detail-post.php"
+              class="hashtag-filter">
 
-<form method="GET"
-      action="<?= BASE_URL ?>/pages/detail-post.php"
-      class="hashtag-filter">
+            <input
+                type="hidden"
+                name="id"
+                value="<?= (int) $post['id']; ?>"
+            >
 
-    <input
-        type="hidden"
-        name="id"
-        value="<?= (int) $post['id']; ?>"
-    >
+            <input
+                type="text"
+                name="hashtag"
+                value="<?= e($hashtag); ?>"
+                placeholder="Cari komentar berdasarkan hashtag..."
+                maxlength="50"
+            >
 
-    <input
-        type="text"
-        name="hashtag"
-        value="<?= e($hashtag); ?>"
-        placeholder="Cari komentar berdasarkan hashtag..."
-        maxlength="50"
-    >
+            <button type="submit" class="btn btn-primary btn-small">
+                Cari
+            </button>
 
-    <button type="submit" class="btn btn-primary btn-small">
-        Cari
-    </button>
+            <!-- Tombol reset filter tagar jika filter sedang aktif -->
+            <?php if ($hashtag !== ''): ?>
 
-    <?php if ($hashtag !== ''): ?>
+                <a
+                    href="<?= BASE_URL ?>/pages/detail-post.php?id=<?= (int) $post['id']; ?>"
+                    class="btn btn-secondary btn-small"
+                >
+                    Reset
+                </a>
 
-        <a
-            href="<?= BASE_URL ?>/pages/detail-post.php?id=<?= (int) $post['id']; ?>"
-            class="btn btn-secondary btn-small"
-        >
-            Reset
-        </a>
+            <?php endif; ?>
 
-    <?php endif; ?>
-
-</form>
+        </form>
 
 
+        <!-- Kondisi Jika Belum Ada Komentar -->
         <?php if (empty($comments)): ?>
 
-    <p style="font-size:13px;color:#94a3b8;">
+            <p style="font-size:13px;color:#94a3b8; margin-top:10px;">
 
-        <?php if ($hashtag !== ''): ?>
+                <?php if ($hashtag !== ''): ?>
 
-            Tidak ada komentar dengan hashtag
-            <strong><?= e($hashtag); ?></strong>.
+                    Tidak ada komentar dengan hashtag
+                    <strong><?= e($hashtag); ?></strong>.
+
+                <?php else: ?>
+
+                    Belum ada komentar. Jadilah yang pertama berkomentar!
+
+                <?php endif; ?>
+
+            </p>
 
         <?php else: ?>
 
-            Belum ada komentar. Jadilah yang pertama berkomentar!
-
-        <?php endif; ?>
-
-    </p>
-
-        <?php else: ?>
-
+            <!-- Looping Setiap Komentar -->
             <?php foreach ($comments as $comment): ?>
 
                 <div class="comment-item">
 
+                    <!-- Avatar Pengirim Komentar -->
                     <?php
                     show_detail_avatar(
                         $comment['profile_photo'],
@@ -362,15 +371,14 @@ $flash = get_flash();
 
                     <div style="flex:1;min-width:0;">
 
+                        <!-- Gelembung Konten Komentar -->
                         <div class="comment-bubble">
 
                             <strong>
                                 <?= e($comment['username']); ?>
                             </strong>
 
-
-                            <!-- ISI KOMENTAR -->
-
+                            <!-- Isi Teks Komentar -->
                             <?php if ($comment['content'] !== ''): ?>
 
                                 <div class="comment-content">
@@ -379,9 +387,7 @@ $flash = get_flash();
 
                             <?php endif; ?>
 
-
-                            <!-- GAMBAR KOMENTAR -->
-
+                            <!-- Gambar Lampiran Komentar Jika Ada -->
                             <?php if (!empty($comment['image'])): ?>
 
                                 <img
@@ -392,9 +398,7 @@ $flash = get_flash();
 
                             <?php endif; ?>
 
-
-                            <!-- FILE KOMENTAR -->
-
+                            <!-- Dokumen Lampiran Komentar Jika Ada -->
                             <?php if (!empty($comment['file'])): ?>
 
                                 <a
@@ -410,49 +414,52 @@ $flash = get_flash();
 
                         </div>
 
+                        <!-- Waktu Pengiriman Komentar -->
                         <div class="comment-time">
                             <?= e(detail_display_date($comment['created_at'])); ?>
                         </div>
+
+                        <!-- Opsi Edit & Hapus Hanya Untuk Pemilik Komentar -->
                         <?php if ((int) $comment['user_id'] === (int) $currentUser): ?>
 
-    <div class="comment-actions">
+                            <div class="comment-actions">
 
-        <!-- TOMBOL EDIT -->
-        <a
-            href="<?= BASE_URL ?>/pages/edit-comment.php?id=<?= (int) $comment['id']; ?>"
-            class="btn btn-secondary btn-small"
-        >
-            Edit
-        </a>
+                                <!-- Tombol Menuju Halaman Edit Komentar -->
+                                <a
+                                    href="<?= BASE_URL ?>/pages/edit-comment.php?id=<?= (int) $comment['id']; ?>"
+                                    class="btn btn-secondary btn-small"
+                                >
+                                    Edit
+                                </a>
 
-        <!-- FORM HAPUS -->
-        <form
-            action="<?= BASE_URL ?>/actions/delete-comment.php"
-            method="POST"
-            onsubmit="return confirm('Yakin ingin menghapus komentar ini?');"
-        >
+                                <!-- Formulir Hapus Komentar -->
+                                <form
+                                    action="<?= BASE_URL ?>/actions/delete-comment.php"
+                                    method="POST"
+                                    onsubmit="return confirm('Yakin ingin menghapus komentar ini?');"
+                                >
 
-            <input
-                type="hidden"
-                name="csrf_token"
-                value="<?= e(csrf_token()); ?>"
-            >
+                                    <input
+                                        type="hidden"
+                                        name="csrf_token"
+                                        value="<?= e(csrf_token()); ?>"
+                                    >
 
-            <input
-                type="hidden"
-                name="comment_id"
-                value="<?= (int) $comment['id']; ?>"
-            >
+                                    <input
+                                        type="hidden"
+                                        name="comment_id"
+                                        value="<?= (int) $comment['id']; ?>"
+                                    >
 
-            <button type="submit" class="btn btn-danger btn-small">
-                Hapus
-            </button>
+                                    <button type="submit" class="btn btn-danger btn-small">
+                                        Hapus
+                                    </button>
 
-        </form>
+                                </form>
 
-    </div>
+                            </div>
 
-<?php endif; ?>
+                        <?php endif; ?>
 
                     </div>
 
@@ -465,8 +472,7 @@ $flash = get_flash();
     </section>
 
 
-    <!-- FORM MENAMBAHKAN KOMENTAR -->
-
+    <!-- ================= FORM PENULISAN KOMENTAR BARU ================= -->
     <section class="card">
 
         <div class="comment-title">
@@ -480,14 +486,17 @@ $flash = get_flash();
             class="comment-form"
         >
 
+            <!-- Token Proteksi CSRF -->
             <input type="hidden"
                    name="csrf_token"
                    value="<?= e(csrf_token()); ?>">
 
+            <!-- ID Postingan Tujuan -->
             <input type="hidden"
                    name="post_id"
                    value="<?= (int) $post['id']; ?>">
 
+            <!-- Avatar Pengguna Aktif -->
             <?php
             show_detail_avatar(
                 null,
@@ -498,6 +507,7 @@ $flash = get_flash();
 
             <div class="comment-main">
 
+                <!-- Textarea Isi Komentar -->
                 <textarea
                     name="content"
                     class="comment-input"
@@ -506,11 +516,12 @@ $flash = get_flash();
                     placeholder="Tulis komentar..."
                 ></textarea>
 
-
                 <div class="comment-tools">
 
+                    <!-- Opsi Lampiran Media / File -->
                     <div class="upload-actions">
 
+                        <!-- Tombol Unggah Foto Komentar -->
                         <label
                             for="comment-image"
                             class="upload-label"
@@ -527,7 +538,7 @@ $flash = get_flash();
                             onchange="showFileName(this)"
                         >
 
-
+                        <!-- Tombol Unggah Dokumen Komentar -->
                         <label
                             for="comment-file"
                             class="upload-label"
@@ -546,7 +557,7 @@ $flash = get_flash();
 
                     </div>
 
-
+                    <!-- Tombol Kirim Komentar -->
                     <button type="submit"
                             class="btn btn-primary btn-small">
                         Kirim
@@ -554,6 +565,7 @@ $flash = get_flash();
 
                 </div>
 
+                <!-- Area Penampil Nama File Terpilih -->
                 <div class="file-name"></div>
 
             </div>
@@ -565,14 +577,15 @@ $flash = get_flash();
 </main>
 
 
-<!-- JAVASCRIPT -->
-
+<!-- ================= JAVASCRIPT BANTUAN ================= -->
 <script>
-
+/**
+ * Menampilkan nama berkas yang dipilih pada elemen pratinjau form.
+ *
+ * @param {HTMLInputElement} input Elemen input file yang berubah.
+ */
 function showFileName(input) {
-
     const form = input.closest('form');
-
     const display = form.querySelector('.file-name');
 
     if (!display) {
@@ -581,19 +594,15 @@ function showFileName(input) {
 
     const selectedFiles = [];
 
-    form.querySelectorAll('input[type="file"]').forEach(
-        function(fileInput) {
-
-            if (fileInput.files.length > 0) {
-                selectedFiles.push(fileInput.files[0].name);
-            }
-
+    // Mengumpulkan nama-nama file yang dipilih
+    form.querySelectorAll('input[type="file"]').forEach(function(fileInput) {
+        if (fileInput.files.length > 0) {
+            selectedFiles.push(fileInput.files[0].name);
         }
-    );
+    });
 
     display.textContent = selectedFiles.join(' | ');
 }
-
 </script>
 
 </body>

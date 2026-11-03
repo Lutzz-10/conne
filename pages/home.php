@@ -2,38 +2,49 @@
 
 /**
  * =====================================================
- * HOME PAGE - CONNE
- * Menampilkan timeline postingan.
+ * HOME PAGE (TIMELINE) - CONNE
  * =====================================================
+ * Halaman utama aplikasi yang menampilkan:
+ * 1. Formulir pembuatan postingan baru (teks, foto, berkas dokumen).
+ * 2. Pencarian dan filter linimasa berdasarkan tagar (#hashtag).
+ * 3. Daftar linimasa seluruh postingan yang diurutkan secara kronologis (terbaru).
+ * 4. Navigasi menuju halaman komentar atau pengeditan/penghapusan status.
  */
 
+// Memanggil modul autentikasi dan fungsi bantuan.
 require_once __DIR__ . '/../helpers/auth.php';
 
+// Memastikan hanya pengguna yang telah login yang dapat mengakses halaman beranda.
 require_login();
 
+// Mengambil ID pengguna yang sedang aktif dari session.
 $currentUser = current_user_id();
 
 // -----------------------------------------------------
-// 1. FILTER HASHTAG
+// 1. FILTER TAGAR / HASHTAG
 // -----------------------------------------------------
 
+// Mengambil nilai filter tagar dari URL query string (?hashtag=...).
 $hashtag = trim($_GET['hashtag'] ?? '');
 $filterError = null;
 
+// Memvalidasi format tagar menggunakan regex (harus diawali dengan tanda #).
 if (
     $hashtag !== '' &&
     !preg_match('/^#[\p{L}\p{N}_]+$/u', $hashtag)
 ) {
-    $filterError = 'Format hashtag tidak valid.';
+    $filterError = 'Format hashtag tidak valid. Contoh yang benar: #diskusi, #koding.';
     $hashtag = '';
 }
 
 // -----------------------------------------------------
-// 2. MENGAMBIL POSTINGAN
+// 2. MENGAMBIL DAFTAR POSTINGAN DARI DATABASE
 // -----------------------------------------------------
 
+try {
 
-    try {
+    // Query utama mengambil seluruh data postingan, username, foto profil pembuat,
+    // serta menghitung jumlah komentar masing-masing postingan via subquery.
     $sql = "
         SELECT
             p.*,
@@ -50,6 +61,8 @@ if (
 
     $params = [];
 
+    // Jika filter hashtag diisi, cari postingan yang teksnya memuat hashtag tersebut
+    // ATAU postingan yang komentar di dalamnya memuat hashtag bersangkutan.
     if ($hashtag !== '') {
         $sql .= "
             WHERE (
@@ -67,6 +80,7 @@ if (
         $params[':comment_tag'] = '%' . $hashtag . '%';
     }
 
+    // Mengurutkan postingan dari yang paling baru diunggah.
     $sql .= " ORDER BY p.created_at DESC, p.id DESC";
 
     $postQuery = $pdo->prepare($sql);
@@ -74,22 +88,35 @@ if (
     $posts = $postQuery->fetchAll();
 
 } catch (PDOException $e) {
-    error_log('Home error: ' . $e->getMessage());
+
+    // Catat pesan error ke log server dan beri pesan ramah kepada pengguna.
+    error_log('Home timeline error: ' . $e->getMessage());
 
     $posts = [];
-    $filterError = 'Gagal mengambil data postingan.';
+    $filterError = 'Gagal memuat data linimasa postingan.';
+
 }
 
 // -----------------------------------------------------
-// 3. PESAN FLASH
+// 3. PESAN FLASH DARI SESSION
 // -----------------------------------------------------
 
+// Mengambil pesan notifikasi sementara (flash message) dari sesi jika tersedia.
 $flash = get_flash();
 
 // -----------------------------------------------------
-// 4. FUNGSI AVATAR
+// 4. FUNGSI TAMPILAN AVATAR & TANGGAL
 // -----------------------------------------------------
 
+/**
+ * Menampilkan avatar pengguna dalam bentuk gambar profil
+ * atau inisial huruf pertama jika foto profil belum diunggah.
+ *
+ * @param string|null $photo Lokasi relatif berkas foto profil.
+ * @param string $username Nama pengguna untuk membuat inisial.
+ * @param bool $small Apakah menggunakan ukuran avatar kecil.
+ * @return void
+ */
 function show_avatar($photo, $username, $small = false)
 {
     $class = $small ? 'avatar avatar-small' : 'avatar';
@@ -111,6 +138,12 @@ function show_avatar($photo, $username, $small = false)
     }
 }
 
+/**
+ * Memformat string timestamp database ke format tanggal yang informatif.
+ *
+ * @param string $date String tanggal dan waktu dari database.
+ * @return string Tanggal terformat (contoh: 02 Nov 2026, 20:30).
+ */
 function display_date($date)
 {
     return date('d M Y, H:i', strtotime($date));
@@ -123,20 +156,19 @@ function display_date($date)
 
 <head>
     <meta charset="UTF-8">
-
     <meta name="viewport"
           content="width=device-width, initial-scale=1.0">
 
     <title>Home - CONNE</title>
 
+    <!-- Memuat berkas CSS utama aplikasi -->
     <link rel="stylesheet"
           href="<?= BASE_URL ?>/assets/css/style.css">
 </head>
 
 <body>
 
-<!-- NAVBAR -->
-
+<!-- Komponen Navigasi Atas -->
 <?php require_once __DIR__ . '/../includes/navbar.php'; ?>
 
 
@@ -144,8 +176,7 @@ function display_date($date)
 
     <h2 class="page-title">Beranda</h2>
 
-    <!-- FLASH MESSAGE -->
-
+    <!-- Menampilkan pesan notifikasi flash (sukses / error) -->
     <?php if ($flash): ?>
 
         <div class="alert <?= $flash['type'] === 'success'
@@ -159,6 +190,7 @@ function display_date($date)
     <?php endif; ?>
 
 
+    <!-- Menampilkan pesan error filter jika ada -->
     <?php if ($filterError): ?>
 
         <div class="alert alert-error">
@@ -168,20 +200,21 @@ function display_date($date)
     <?php endif; ?>
 
 
-    <!-- FORM BUAT POSTINGAN -->
-
+    <!-- ================= FORM PEMBUATAN POSTINGAN ================= -->
     <section class="card">
 
         <form action="<?= BASE_URL ?>/actions/store-post.php"
               method="POST"
               enctype="multipart/form-data">
 
+            <!-- Token CSRF untuk melindungi pengiriman form -->
             <input type="hidden"
                    name="csrf_token"
                    value="<?= e(csrf_token()); ?>">
 
             <div class="composer">
 
+                <!-- Avatar Akun Pengguna Aktif -->
                 <?php
                 show_avatar(
                     null,
@@ -191,6 +224,7 @@ function display_date($date)
 
                 <div class="composer-main">
 
+                    <!-- Textarea Konten Postingan (Maks. 250 Karakter) -->
                     <textarea
                         name="content"
                         maxlength="250"
@@ -199,8 +233,10 @@ function display_date($date)
 
                     <div class="composer-bottom">
 
+                        <!-- Tombol Unggah Lampiran (Foto dan Dokumen) -->
                         <div class="upload-actions">
 
+                            <!-- Input Foto -->
                             <label for="post-image"
                                    class="upload-label">
                                 <span>▧</span> Foto
@@ -215,6 +251,7 @@ function display_date($date)
                                 onchange="showFileName(this)"
                             >
 
+                            <!-- Input Berkas Dokumen -->
                             <label for="post-file"
                                    class="upload-label">
                                 <span>📎</span> File
@@ -231,6 +268,7 @@ function display_date($date)
 
                         </div>
 
+                        <!-- Tombol Submit Publikasi Postingan -->
                         <button type="submit"
                                 class="btn btn-primary">
                             Post
@@ -238,6 +276,7 @@ function display_date($date)
 
                     </div>
 
+                    <!-- Elemen Penampil Nama Berkas Terpilih -->
                     <div class="file-name"></div>
 
                 </div>
@@ -249,19 +288,19 @@ function display_date($date)
     </section>
 
 
-    <!-- FILTER HASHTAG -->
-
+    <!-- ================= FORM FILTER TAGAR (HASHTAG) ================= -->
     <section class="card">
 
         <form action="<?= BASE_URL ?>/pages/home.php"
               method="GET"
               class="filter-form">
 
+            <!-- Input Pencarian Tagar -->
             <input
                 type="text"
                 name="hashtag"
                 class="form-control"
-                placeholder="Cari hashtag, contoh #RPL"
+                placeholder="Cari hashtag, contoh: #diskusi"
                 value="<?= e($hashtag); ?>"
             >
 
@@ -270,6 +309,7 @@ function display_date($date)
                 Cari
             </button>
 
+            <!-- Tombol Reset Filter Tagar -->
             <a href="<?= BASE_URL ?>/pages/home.php"
                class="btn btn-secondary">
                 Reset
@@ -280,16 +320,16 @@ function display_date($date)
     </section>
 
 
-    <!-- TIMELINE POSTINGAN -->
-
+    <!-- ================= LINIMASA POSTINGAN ================= -->
     <h3 class="page-title">Postingan Terbaru</h3>
 
+    <!-- Pesan jika belum ada postingan -->
     <?php if (empty($posts)): ?>
 
         <div class="card" style="text-align:center;">
 
             <p style="color:#64748b;">
-                Belum ada postingan.
+                Belum ada postingan yang ditemukan.
             </p>
 
         </div>
@@ -297,12 +337,12 @@ function display_date($date)
     <?php endif; ?>
 
 
+    <!-- Looping Menampilkan Seluruh Postingan -->
     <?php foreach ($posts as $post): ?>
 
         <article class="post-card">
 
-            <!-- HEADER POST -->
-
+            <!-- Header Postingan: Avatar, Username, dan Waktu Publikasi -->
             <div class="post-header">
 
                 <?php
@@ -327,8 +367,7 @@ function display_date($date)
             </div>
 
 
-            <!-- ISI POST -->
-
+            <!-- Isi Teks Postingan -->
             <?php if ($post['content'] !== ''): ?>
 
                 <div class="post-content">
@@ -338,8 +377,7 @@ function display_date($date)
             <?php endif; ?>
 
 
-            <!-- GAMBAR POST -->
-
+            <!-- Gambar Lampiran Jika Ada -->
             <?php if (!empty($post['image'])): ?>
 
                 <img
@@ -351,8 +389,7 @@ function display_date($date)
             <?php endif; ?>
 
 
-            <!-- FILE POST -->
-
+            <!-- Berkas Dokumen Lampiran Jika Ada -->
             <?php if (!empty($post['file'])): ?>
 
                 <a
@@ -367,57 +404,60 @@ function display_date($date)
             <?php endif; ?>
 
 
-            <!-- TOMBOL MENUJU DETAIL POSTINGAN -->
-
+            <!-- Footer Postingan: Tombol Komentar, Serta Opsi Edit/Hapus Pemilik -->
             <div class="post-footer">
 
-    <a
-    href="<?= BASE_URL ?>/pages/detail-post.php?id=<?= (int) $post['id']; ?>"
-    class="comment-link"
->
-    💬 Komentar (<?= (int) $post['comment_count']; ?>)
-</a>
-
-    <?php if ((int) $post['user_id'] === (int) $currentUser): ?>
-
-        <div class="post-actions">
-
-            <a
-                href="<?= BASE_URL ?>/pages/edit-post.php?id=<?= (int) $post['id']; ?>"
-                class="btn btn-secondary btn-small"
-            >
-                Edit
-            </a>
-
-            <form
-                action="<?= BASE_URL ?>/actions/delete-post.php"
-                method="POST"
-                onsubmit="return confirm('Yakin ingin menghapus postingan ini?');"
-            >
-
-                <input
-                    type="hidden"
-                    name="csrf_token"
-                    value="<?= e(csrf_token()); ?>"
+                <!-- Tautan Menuju Halaman Detail Postingan & Komentar -->
+                <a
+                    href="<?= BASE_URL ?>/pages/detail-post.php?id=<?= (int) $post['id']; ?>"
+                    class="comment-link"
                 >
+                    💬 Komentar (<?= (int) $post['comment_count']; ?>)
+                </a>
 
-                <input
-                    type="hidden"
-                    name="post_id"
-                    value="<?= (int) $post['id']; ?>"
-                >
+                <!-- Opsi Khusus Pemilik Postingan -->
+                <?php if ((int) $post['user_id'] === (int) $currentUser): ?>
 
-                <button type="submit" class="btn btn-danger btn-small">
-                    Hapus
-                </button>
+                    <div class="post-actions">
 
-            </form>
+                        <!-- Tombol Menuju Form Pengeditan Postingan -->
+                        <a
+                            href="<?= BASE_URL ?>/pages/edit-post.php?id=<?= (int) $post['id']; ?>"
+                            class="btn btn-secondary btn-small"
+                        >
+                            Edit
+                        </a>
 
-        </div>
+                        <!-- Formulir Penghapusan Postingan -->
+                        <form
+                            action="<?= BASE_URL ?>/actions/delete-post.php"
+                            method="POST"
+                            onsubmit="return confirm('Yakin ingin menghapus postingan ini? Seluruh komentar di dalamnya juga akan terhapus.');"
+                        >
 
-    <?php endif; ?>
+                            <input
+                                type="hidden"
+                                name="csrf_token"
+                                value="<?= e(csrf_token()); ?>"
+                            >
 
-</div>
+                            <input
+                                type="hidden"
+                                name="post_id"
+                                value="<?= (int) $post['id']; ?>"
+                            >
+
+                            <button type="submit" class="btn btn-danger btn-small">
+                                Hapus
+                            </button>
+
+                        </form>
+
+                    </div>
+
+                <?php endif; ?>
+
+            </div>
 
         </article>
 
@@ -426,14 +466,15 @@ function display_date($date)
 </main>
 
 
-<!-- JAVASCRIPT -->
-
+<!-- ================= JAVASCRIPT BANTUAN ================= -->
 <script>
-
+/**
+ * Menampilkan nama berkas yang dipilih pada form unggah.
+ *
+ * @param {HTMLInputElement} input Elemen input file.
+ */
 function showFileName(input) {
-
     const form = input.closest('form');
-
     const display = form.querySelector('.file-name');
 
     if (!display) {
@@ -442,19 +483,15 @@ function showFileName(input) {
 
     const selectedFiles = [];
 
-    form.querySelectorAll('input[type="file"]').forEach(
-        function(fileInput) {
-
-            if (fileInput.files.length > 0) {
-                selectedFiles.push(fileInput.files[0].name);
-            }
-
+    // Mengambil nama setiap berkas yang dipilih pada input file
+    form.querySelectorAll('input[type="file"]').forEach(function(fileInput) {
+        if (fileInput.files.length > 0) {
+            selectedFiles.push(fileInput.files[0].name);
         }
-    );
+    });
 
     display.textContent = selectedFiles.join(' | ');
 }
-
 </script>
 
 </body>

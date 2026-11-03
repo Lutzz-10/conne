@@ -2,61 +2,66 @@
 
 /**
  * =====================================================
- * STORE COMMENT - CONNE
- * Memproses pembuatan komentar.
+ * STORE COMMENT PROCESS - CONNE
  * =====================================================
+ * Memproses penyimpanan komentar baru pada postingan tertentu:
+ * 1. Memeriksa status login dan metode HTTP POST.
+ * 2. Memeriksa token CSRF untuk mencegah serangan CSRF.
+ * 3. Memvalidasi keberadaan ID postingan target.
+ * 4. Memeriksa panjang string karakter komentar (maks. 250 karakter).
+ * 5. Mengunggah gambar atau berkas dokumen ke folder `uploads/comments/`.
+ * 6. Menyimpan rekaman data ke tabel `comments`.
+ * 7. Membersihkan berkas fisik jika terjadi kegagalan sistem.
  */
 
+// Memanggil modul autentikasi dan fungsi bantuan.
 require_once __DIR__ . '/../helpers/auth.php';
 
-// Memastikan pengguna sudah login.
+// Memastikan hanya pengguna yang telah login yang dapat mengirim komentar.
 require_login();
 
 // -----------------------------------------------------
-// 1. MEMERIKSA REQUEST
+// 1. MEMERIKSA REQUEST & CSRF TOKEN
 // -----------------------------------------------------
 
+// Memastikan request dikirim melalui metode POST.
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     redirect('/pages/home.php');
 }
 
 // Memeriksa token CSRF.
 if (!verify_csrf_token($_POST['csrf_token'] ?? null)) {
-
-    set_flash('error', 'Permintaan tidak valid.');
-
+    set_flash('error', 'Permintaan tidak valid atau token sesi telah berakhir.');
     redirect('/pages/home.php');
 }
 
 // -----------------------------------------------------
-// 2. MENGAMBIL ID POSTINGAN
+// 2. MENGAMBIL & MEMVALIDASI ID POSTINGAN
 // -----------------------------------------------------
 
+// Mengambil dan memvalidasi integer post_id tujuan komentar.
 $postId = filter_var(
     $_POST['post_id'] ?? null,
     FILTER_VALIDATE_INT
 );
 
-// Memastikan ID postingan valid.
 if (!$postId || $postId < 1) {
-
     set_flash('error', 'Postingan tidak valid.');
-
     redirect('/pages/home.php');
 }
 
-// Alamat halaman detail untuk kembali setelah proses komentar.
+// URL halaman detail untuk kembali setelah proses komentar selesai.
 $detailUrl = '/pages/detail-post.php?id=' . $postId;
 
-
 // -----------------------------------------------------
-// 3. MEMERIKSA POSTINGAN
+// 3. MEMASTIKAN POSTINGAN TUJUAN ADA DI DATABASE
 // -----------------------------------------------------
 
 $checkPost = $pdo->prepare("
     SELECT id
     FROM posts
     WHERE id = :id
+    LIMIT 1
 ");
 
 $checkPost->execute([
@@ -64,37 +69,31 @@ $checkPost->execute([
 ]);
 
 if (!$checkPost->fetch()) {
-
     set_flash('error', 'Postingan tidak ditemukan.');
-
     redirect('/pages/home.php');
 }
 
-
 // -----------------------------------------------------
-// 4. MENGAMBIL ISI KOMENTAR
+// 4. VALIDASI PANJANG TEKS KOMENTAR
 // -----------------------------------------------------
 
 $content = trim($_POST['content'] ?? '');
 
-// Memeriksa panjang komentar maksimal 250 karakter.
+// Memeriksa panjang teks maksimal 250 karakter.
 $length = function_exists('mb_strlen')
     ? mb_strlen($content, 'UTF-8')
     : strlen($content);
 
 if ($length > 250) {
-
     set_flash('error', 'Komentar maksimal 250 karakter.');
-
     redirect($detailUrl);
 }
 
-
 // -----------------------------------------------------
-// 5. FORMAT FILE YANG DIPERBOLEHKAN
+// 5. DAFTAR FORMAT BERKAS YANG DIIZINKAN
 // -----------------------------------------------------
 
-// Format gambar.
+// Format gambar yang diizinkan (MIME type => ekstensi file).
 $imageMimes = [
     'image/jpeg' => 'jpg',
     'image/png'  => 'png',
@@ -102,7 +101,7 @@ $imageMimes = [
     'image/webp' => 'webp'
 ];
 
-// Format dokumen.
+// Format berkas dokumen yang diizinkan (MIME type => ekstensi file).
 $fileMimes = [
     'application/pdf' => 'pdf',
     'text/plain' => 'txt',
@@ -119,8 +118,7 @@ $fileMimes = [
 ];
 
 $imagePath = null;
-$filePath = null;
-
+$filePath  = null;
 
 // -----------------------------------------------------
 // 6. PROSES UPLOAD DAN SIMPAN KOMENTAR
@@ -128,31 +126,28 @@ $filePath = null;
 
 try {
 
-    // Mengunggah gambar komentar.
+    // Mengunggah gambar komentar jika dipilih.
     $imagePath = upload_file(
         'image',
         'uploads/comments',
         $imageMimes
     );
 
-    // Mengunggah file komentar.
+    // Mengunggah dokumen lampiran komentar jika dipilih.
     $filePath = upload_file(
         'file',
         'uploads/comments',
         $fileMimes
     );
 
-
-    // Memastikan komentar tidak kosong seluruhnya.
+    // Memastikan komentar tidak kosong seluruhnya (wajib ada teks, foto, atau file).
     if ($content === '' && !$imagePath && !$filePath) {
-
         throw new RuntimeException(
-            'Komentar harus memiliki teks, gambar, atau file.'
+            'Komentar harus memiliki teks, gambar, atau file lampiran.'
         );
     }
 
-
-    // Menyimpan komentar ke database.
+    // Menyimpan data komentar ke database menggunakan prepared statement.
     $query = $pdo->prepare("
         INSERT INTO comments (
             post_id,
@@ -173,34 +168,26 @@ try {
     ");
 
     $query->execute([
-
-        ':post_id' => $postId,
-
-        ':user_id' => current_user_id(),
-
-        ':content' => $content,
-
-        ':image' => $imagePath,
-
-        ':file' => $filePath,
-
+        ':post_id'   => $postId,
+        ':user_id'   => current_user_id(),
+        ':content'   => $content,
+        ':image'     => $imagePath,
+        ':file'      => $filePath,
+        // Menyimpan nama asli file dokumen untuk tautan unduhan
         ':file_name' => $filePath
             ? basename($_FILES['file']['name'])
             : null
-
     ]);
-
 
     set_flash('success', 'Komentar berhasil ditambahkan.');
 
 } catch (RuntimeException $e) {
 
-    // Membersihkan gambar jika proses gagal.
+    // Membersihkan berkas yang sempat terunggah jika terjadi error validasi (Rollback fisik).
     if ($imagePath && is_file(BASE_PATH . '/' . $imagePath)) {
         unlink(BASE_PATH . '/' . $imagePath);
     }
 
-    // Membersihkan file jika proses gagal.
     if ($filePath && is_file(BASE_PATH . '/' . $filePath)) {
         unlink(BASE_PATH . '/' . $filePath);
     }
@@ -209,14 +196,14 @@ try {
 
 } catch (PDOException $e) {
 
+    // Mencatat detail error ke log server tanpa membocorkannya ke publik.
     error_log('Store comment error: ' . $e->getMessage());
 
-    // Membersihkan gambar jika proses gagal.
+    // Membersihkan berkas fisik jika database gagal menyimpan data.
     if ($imagePath && is_file(BASE_PATH . '/' . $imagePath)) {
         unlink(BASE_PATH . '/' . $imagePath);
     }
 
-    // Membersihkan file jika proses gagal.
     if ($filePath && is_file(BASE_PATH . '/' . $filePath)) {
         unlink(BASE_PATH . '/' . $filePath);
     }
@@ -224,7 +211,6 @@ try {
     set_flash('error', 'Komentar gagal disimpan.');
 
 }
-
 
 // -----------------------------------------------------
 // 7. KEMBALI KE HALAMAN DETAIL POSTINGAN
